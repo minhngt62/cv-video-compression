@@ -41,7 +41,7 @@ class Upsample(nn.Module):
     def forward(self, x):
         return self.up_scale(self.conv(x))
 
-class NervBlock(nn.Module):
+class NeRVBlock(nn.Module):
     def __init__(
         self, 
         in_channels, 
@@ -57,7 +57,7 @@ class NervBlock(nn.Module):
     def forward(self, x):
         return self.act(self.conv(x))
 
-class Nerv(nn.Module):
+class NeRV(nn.Module):
     def __init__(
         self,
         stem_dim_num,
@@ -91,7 +91,7 @@ class Nerv(nn.Module):
                 new_ngf = max(ngf // (1 if stride == 1 else reduction), lower_width)
 
             for j in range(num_blocks):
-                self.layers.append(NervBlock(
+                self.layers.append(NeRVBlock(
                     in_channels=ngf, out_channels=new_ngf, stride=1 if j else stride, bias=bias))
                 ngf = new_ngf
 
