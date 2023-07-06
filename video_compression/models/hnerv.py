@@ -42,22 +42,6 @@ class UpConv(nn.Module):
     def forward(self, x):
         return self.upconv(x)
 
-class PositionalEncoding(nn.Module):
-    def __init__(self, pe_embed):
-        super(PositionalEncoding, self).__init__()
-        self.pe_embed = pe_embed
-        if 'pe' in pe_embed:
-            lbase, levels = [float(x) for x in pe_embed.split('_')[-2:]]
-            self.pe_bases = lbase ** torch.arange(int(levels)) * pi
-
-    def forward(self, pos):
-        if 'pe' in self.pe_embed:
-            value_list = pos * self.pe_bases.to(pos.device)
-            pe_embed = torch.cat([torch.sin(value_list), torch.cos(value_list)], dim=-1)
-            return pe_embed.view(pos.size(0), -1, 1, 1)
-        else:
-            return pos
-
 class NeRVBlock(nn.Module):
     def __init__(
         self,
@@ -80,7 +64,6 @@ class NeRVBlock(nn.Module):
 class HNeRV(nn.Module):
     def __init__(
         self,
-        embed,
         ks,
         num_blks,
         enc_strds,

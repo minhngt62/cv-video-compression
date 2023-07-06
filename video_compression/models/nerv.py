@@ -1,123 +1,90 @@
 import torch
-from torch import nn, Tensor
+import torch.nn as nn
+from timm.models.layers import trunc_normal_, DropPath
 import torch.nn.functional as F
-import math
+from math import pi, sqrt, ceil
+import numpy as np
+import time
+
+from .hnerv import NeRVBlock
 
 class PositionalEncoding(nn.Module):
     def __init__(self, pe_embed):
         super(PositionalEncoding, self).__init__()
-        self.pe_embed = pe_embed.lower()
-        if self.pe_embed == 'none':
-            self.embed_length = 1
-        else:
-            self.lbase, self.levels = [float(x) for x in pe_embed.split('_')]
-            self.levels = int(self.levels)
-            self.embed_length = 2 * self.levels
+        self.pe_embed = pe_embed
+        if 'pe' in pe_embed:
+            lbase, levels = [float(x) for x in pe_embed.split('_')[-2:]]
+            self.pe_bases = lbase ** torch.arange(int(levels)) * pi
 
     def forward(self, pos):
-        if self.pe_embed == 'none':
-            return pos[:,None]
+        if 'pe' in self.pe_embed:
+            value_list = pos * self.pe_bases.to(pos.device)
+            pe_embed = torch.cat([torch.sin(value_list), torch.cos(value_list)], dim=-1)
+            return pe_embed.view(pos.size(0), -1, 1, 1)
         else:
-            pe_list = []
-            for i in range(self.levels):
-                temp_value = pos * self.lbase **(i) * math.pi
-                pe_list += [torch.sin(temp_value), torch.cos(temp_value)]
-            return torch.stack(pe_list, 1)
-
-def mlp(fc_dims, bias=True):
-    fcs = []
-    for i in range(len(fc_dims)-1):
-        fcs += [nn.Linear(fc_dims[i], fc_dims[i+1], bias=bias), 
-                nn.GELU()]
-    return nn.Sequential(*fcs)
-
-class Upsample(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, bias):
-        super().__init__()
-
-        self.conv = nn.Conv2d(in_channels, out_channels * stride**2, 3, 1, 1, bias=bias)
-        self.up_scale = nn.PixelShuffle(stride)
-    
-    def forward(self, x):
-        return self.up_scale(self.conv(x))
-
-class NeRVBlock(nn.Module):
-    def __init__(
-        self, 
-        in_channels, 
-        out_channels,
-        stride,
-        bias: bool = True,
-    ):
-        super().__init__()
-        
-        self.conv = Upsample(in_channels, out_channels, stride, bias)
-        self.act = nn.GELU()
-
-    def forward(self, x):
-        return self.act(self.conv(x))
+            return pos
 
 class NeRV(nn.Module):
     def __init__(
         self,
-        stem_dim_num,
-        fc_hw_dim,
-        pe_embed,
-        stride_list,
-        expansion,
-        reduction,
+        embed,
+        ks,
+        num_blks,
+        dec_strds,
+        fc_dim,
+        reduce,
         lower_width,
-        num_blocks,
-        bias,
-        sin_res,
-        sigmoid
+        fc_hw,
     ):
         super().__init__()
-        
-        self.pe = PositionalEncoding(pe_embed)
-        embed_length = self.pe.embed_length
+        self.embed = embed
+        ks_enc, ks_dec1, ks_dec2 = [int(x) for x in ks.split('_')]
+        enc_blks, dec_blks = [int(x) for x in num_blks.split('_')]
 
-        stem_dim, stem_num = [int(x) for x in stem_dim_num.split('_')]
-        self.fc_h, self.fc_w, self.fc_dim = [int(x) for x in fc_hw_dim.split('_')]
-        mlp_dim_list = [embed_length] + [stem_dim] * stem_num + [self.fc_h *self.fc_w *self.fc_dim]
-        self.stem = mlp(fc_dims=mlp_dim_list)
+        ch_in = 2 * int(embed.split('_')[-1])
+        self.pe_embed = PositionalEncoding(embed)  
+        self.encoder = nn.Identity()
+        self.fc_h, self.fc_w = [int(x) for x in fc_hw.split('_')]
 
-        self.layers, self.head_layers = [nn.ModuleList() for _ in range(2)]
-        ngf = self.fc_dim
-        for i, stride in enumerate(stride_list):
-            if i == 0:
-                new_ngf = int(ngf * expansion)
-            else:
-                new_ngf = max(ngf // (1 if stride == 1 else reduction), lower_width)
-
-            for j in range(num_blocks):
-                self.layers.append(NeRVBlock(
-                    in_channels=ngf, out_channels=new_ngf, stride=1 if j else stride, bias=bias))
+        decoder_layers = []        
+        ngf = fc_dim
+        out_f = int(ngf * self.fc_h * self.fc_w)
+        decoder_layer1 = NeRVBlock(dec_block=False, ngf=ch_in, new_ngf=out_f, ks=0, strd=1, bias=True)
+        decoder_layers.append(decoder_layer1)
+        for i, strd in enumerate(dec_strds):                         
+            reduction = sqrt(strd) if reduce==-1 else reduce
+            new_ngf = int(max(round(ngf / reduction), lower_width))
+            for j in range(dec_blks):
+                cur_blk = NeRVBlock(dec_block=True, ngf=ngf, new_ngf=new_ngf, ks=min(ks_dec1+2*i, ks_dec2), strd=1 if j else strd, bias=True)
+                decoder_layers.append(cur_blk)
                 ngf = new_ngf
-
-            head_layer = [None]
-            if sin_res:
-                if i == len(stride_list) - 1:
-                    head_layer = nn.Conv2d(ngf, 3, 1, 1, bias=bias)
-                else:
-                    head_layer = None
-            else:
-                head_layer = nn.Conv2d(ngf, 3, 1, 1, bias=bias)
-            self.head_layers.append(head_layer)
         
-        self.sigmoid = sigmoid
-    
-    def forward(self, x: Tensor):
-        x = self.pe(x)
-        x = self.stem(x)
-        x = x.view(x.size(0), self.fc_dim, self.fc_h, self.fc_w)
+        self.decoder = nn.ModuleList(decoder_layers)
+        self.head_layer = nn.Conv2d(ngf, 3, 3, 1, 1) 
 
-        frames = []
-        for layer, head_layer in zip(self.layers, self.head_layers):
-            x = layer(x)
-            if head_layer is not None:
-                frame = head_layer(x)
-                frame = torch.sigmoid(frame) if self.sigmoid else (torch.tanh(frame) + 1) * 0.5
-                frames.append(frame)
+        self.out = nn.Sigmoid()
+
+    def forward(self, input, input_embed=None):
+        if input_embed is not None:
+            img_embed = input_embed
+        else:
+            input = self.pe_embed(input[:,None]).float()
+            img_embed = self.encoder(input)
         
-        return frames
+        embed_list = [img_embed]
+        dec_start = time.time()
+        output = self.decoder[0](img_embed)
+        n, c, h, w = output.shape
+        output = output.view(n, -1, self.fc_h, self.fc_w, h, w).permute(0,1,4,2,5,3).reshape(n,-1,self.fc_h * h, self.fc_w * w)
+        embed_list.append(output)
+        for layer in self.decoder[1:]:
+            output = layer(output) 
+            embed_list.append(output)
+
+        img_out = self.out(self.head_layer(output))
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        dec_time = time.time() - dec_start
+
+        return  img_out, embed_list, dec_time
+
