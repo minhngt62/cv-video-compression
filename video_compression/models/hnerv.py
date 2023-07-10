@@ -129,3 +129,20 @@ class HNeRV(nn.Module):
         dec_time = time.time() - dec_start
 
         return  img_out, embed_list, dec_time
+
+class HNeRVDecoder(nn.Module):
+    def __init__(self, model: HNeRV):
+        super().__init__()
+        self.fc_h, self.fc_w = [torch.tensor(x) for x in [model.fc_h, model.fc_w]]
+        self.decoder = model.decoder
+        self.head_layer = model.head_layer
+
+    def forward(self, img_embed):
+        output = self.decoder[0](img_embed)
+        n, _, h, w = output.shape
+        output = output.view(n, -1, self.fc_h, self.fc_w, h, w).permute(0,1,4,2,5,3).reshape(n,-1,self.fc_h * h, self.fc_w * w)
+        for layer in self.decoder[1:]:
+            output = layer(output) 
+        output = self.head_layer(output)
+
+        return  torch.sigmoid(output)
