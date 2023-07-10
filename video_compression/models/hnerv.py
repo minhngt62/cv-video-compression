@@ -90,13 +90,13 @@ class HNeRV(nn.Module):
         decoder_layers = []        
         ngf = fc_dim
         out_f = int(ngf * self.fc_h * self.fc_w)
-        decoder_layer1 = NeRVBlock(dec_block=False, ngf=ch_in, new_ngf=out_f, ks=0, strd=1, bias=True)
+        decoder_layer1 = NeRVBlock(is_decode=False, ngf=ch_in, new_ngf=out_f, ks=0, strd=1, bias=True)
         decoder_layers.append(decoder_layer1)
         for i, strd in enumerate(dec_strds):                         
             reduction = sqrt(strd) if reduce==-1 else reduce
             new_ngf = int(max(round(ngf / reduction), lower_width))
             for j in range(dec_blks):
-                cur_blk = NeRVBlock(dec_block=True, ngf=ngf, new_ngf=new_ngf, ks=min(ks_dec1+2*i, ks_dec2), strd=1 if j else strd, bias=True)
+                cur_blk = NeRVBlock(is_decode=True, ngf=ngf, new_ngf=new_ngf, ks=min(ks_dec1+2*i, ks_dec2), strd=1 if j else strd, bias=True)
                 decoder_layers.append(cur_blk)
                 ngf = new_ngf
         
