@@ -17,6 +17,7 @@ class DownConv(nn.Module):
         strd,
         bias=True
     ):
+        super().__init__()
         self.downconv = nn.Sequential(
                 nn.PixelUnshuffle(strd) if strd !=1 else nn.Identity(),
                 nn.Conv2d(ngf * strd**2, new_ngf, ks, 1, ceil((ks - 1) // 2), bias=bias)
@@ -34,6 +35,7 @@ class UpConv(nn.Module):
         strd,
         bias=True   
     ):
+        super().__init__()
         self.upconv = nn.Sequential(
                 nn.Conv2d(ngf, new_ngf * strd * strd, ks, 1, ceil((ks - 1) // 2), bias=bias),
                 nn.PixelShuffle(strd) if strd !=1 else nn.Identity(),
