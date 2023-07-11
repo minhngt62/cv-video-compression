@@ -5,10 +5,16 @@ In the information age today, where petabytes of content is generated and consum
 <p align="center">
   <img src="https://github.com/minhngt62/vtl-video-compression/blob/main/examples/assets/recon_nervl.png" />
 </p>
+
 ---
 
-## Running the Decoder
+## Requirements
 ```
-  python streamlit run run.py
+pip install -r requirements.txt
+```
+
+## Running the Decoders
+```
+python streamlit run run.py
 ```
 
